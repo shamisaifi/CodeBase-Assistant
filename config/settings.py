@@ -1,5 +1,6 @@
 from pydantic_settings import BaseSettings
 from functools import lru_cache
+from typing import Optional
 
 class Settings(BaseSettings):
     DATABASE_URL: str
@@ -12,6 +13,13 @@ class Settings(BaseSettings):
     REFRESH_TOKEN_SECRET: str
     REFRESH_TOKEN_EXPIRE: int = 10080
     APP_ENV: str = "development"
+    REDIS_HOST: str
+    REDIS_PORT: int
+    SMTP_HOST: str = "smtp.gmail.com"
+    SMTP_PORT: int = 587
+    SMTP_USER: Optional[str] = None
+    SMTP_PASS: Optional[str] = None
+    SMTP_FROM: Optional[str] = None
 
     class Config:
         env_file = '.env'

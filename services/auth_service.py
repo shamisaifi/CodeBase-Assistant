@@ -1,11 +1,13 @@
-from models.auth import User
+import bcrypt
+import secrets
 from fastapi import HTTPException
 from sqlalchemy import select
+
 from config.helper_functions import generateAccessToken, generateRefreshToken
-import bcrypt
+from models.auth import User
 
-
-async def register_user_serive(data, db):
+# Registration
+async def register_user_service(data, db):
     result = await db.execute(select(User).where(User.email == data.email))
     user = result.scalar_one_or_none()
 
@@ -36,6 +38,8 @@ async def register_user_serive(data, db):
 
     return {"access_token": access_token, "refresh_token": refresh_token, "token_type": "bearer"}
 
+
+# Login
 async def login_service(data, db):
     result = await db.execute(select(User).where(User.email == data.email))
     user = result.scalar_one_or_none()
@@ -53,6 +57,8 @@ async def login_service(data, db):
 
     return {"access_token": access_token, "refresh_token": refresh_token, "token_type": "bearer"}
 
+
+# Update Profile
 async def update_profile_service(user_id, data, db):
     result = await db.execute(select(User).where(User.id == user_id))
     user = result.scalar_one_or_none()
@@ -60,11 +66,67 @@ async def update_profile_service(user_id, data, db):
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
 
-    user.firt_name = data.first_name or user.first_name
-    user.last_name = data.last_name or user.last_name
-    user.avatar = data.avatar or user.avater
+    user.first_name = data.first_name if data.first_name is not None else user.first_name
+    user.last_name = data.last_name if data.last_name is not None else user.last_name
+    user.avatar = data.avatar if data.avatar is not None else user.avatar
 
     await db.commit() 
     await db.refresh(user)
     return user
 
+
+# Generate OTP
+async def generate_otp_service(email, redis):
+    stored_otp = await redis.get(f"otp:{email}")
+    if stored_otp:
+        await redis.delete(f"otp:{email}")
+    
+    new_otp = str(secrets.randbelow(1000000)).zfill(6)
+    await redis.setex(f"otp:{email}", 600, new_otp)
+    return new_otp
+
+
+# Verify OTP
+async def verify_otp_service(data, redis):
+    stored_otp = await redis.get(f"otp:{data.email}")
+    
+    if not stored_otp:
+        raise HTTPException(status_code=400, detail="OTP expired or not requested")
+    
+    if stored_otp != data.otp:
+        raise HTTPException(status_code=400, detail="Wrong OTP")
+    
+    await redis.setex(f"otp_verified:{data.email}", 300, "true")
+    await redis.delete(f"otp:{data.email}")
+
+    return True
+
+# Reset Password
+async def reset_password_service(data, redis, db):
+    result = await db.execute(select(User).where(User.email == data.email))
+    user = result.scalar_one_or_none()
+
+    if not user:
+        raise HTTPException(status_code=404, detail="Invalid email id")
+
+    is_verified = await redis.get(f"otp_verified:{data.email}")
+    if not is_verified:
+        raise HTTPException(status_code=403, detail="OTP not verified")
+    await redis.delete(f"otp_verified:{data.email}")
+
+    new_pass = data.new_password
+    confirm_new_pass = data.confirm_new_password
+
+    if new_pass != confirm_new_pass:
+        raise HTTPException(status_code=400, detail="Password do not match")
+
+    new_pass_bytes = new_pass.encode('utf-8')
+    salt = bcrypt.gensalt()
+    new_hashed_pass = bcrypt.hashpw(new_pass_bytes, salt)
+    new_hashed_pass = new_hashed_pass.decode('utf-8')
+
+    user.password = new_hashed_pass
+    await db.commit()
+    await db.refresh(user)
+
+    return {"message": "Password reset successfully"}

@@ -1,10 +1,14 @@
 from contextlib import asynccontextmanager
+
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+import redis.asyncio as redis
+
 from db.session import engine
 from db.base import Base
 from routes.auth_router import router as auth_router
+from config.settings import settings
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -12,8 +16,16 @@ async def lifespan(app: FastAPI):
         await conn.run_sync(Base.metadata.create_all)
     print("DB tables are created")
 
+    app.state.redis = redis.Redis(
+        host=settings.REDIS_HOST,
+        port=settings.REDIS_PORT,
+        db=0,
+        decode_responses=True
+    )
+
     yield
 
+    await app.state.redis.aclose()
     await engine.dispose()
     print("DB connections closed")
 

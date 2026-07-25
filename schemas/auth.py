@@ -27,11 +27,21 @@ class UserResponse(BaseModel):
     updated_at: datetime
 
 class UserUpdate(BaseModel):
-    first_name: str
-    last_name: str
-    avatar: str
+    first_name: Optional[str] = None
+    last_name: Optional[str] = None
+    avatar: Optional[str] = None
 
 class TokenResponse(BaseModel):
     access_token: str
     refresh_token: str
     token_type: str = "bearer"
+
+class VerifyEmail(BaseModel):
+    email: EmailStr
+
+class VerifyOtp(VerifyEmail):
+    otp: str
+
+class ResetPassword(VerifyEmail):
+    new_password: str
+    confirm_new_password: str
