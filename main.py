@@ -1,14 +1,15 @@
 from contextlib import asynccontextmanager
 
+import redis.asyncio as redis
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-import redis.asyncio as redis
 
-from db.session import engine
-from db.base import Base
-from routes.auth_router import router as auth_router
 from config.settings import settings
+from db.base import Base
+from db.session import engine
+from routes.auth_router import router as auth_router
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):

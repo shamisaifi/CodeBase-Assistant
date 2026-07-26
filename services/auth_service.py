@@ -1,13 +1,21 @@
-import bcrypt
 import secrets
+from datetime import datetime, timezone
+
+import bcrypt
 from fastapi import HTTPException
 from sqlalchemy import select
 
-from config.helper_functions import generateAccessToken, generateRefreshToken
+from config.helper_functions import (
+    generateAccessToken,
+    generateRefreshToken,
+    get_client_ip,
+)
 from models.auth import User
+from services.mail_service import send_login_alert_email, send_welcome_email
+
 
 # Registration
-async def register_user_service(data, db):
+async def register_user_service(data, background_tasks, db):
     result = await db.execute(select(User).where(User.email == data.email))
     user = result.scalar_one_or_none()
 
@@ -36,11 +44,13 @@ async def register_user_service(data, db):
     access_token = generateAccessToken(payload)
     refresh_token = generateRefreshToken(payload)
 
+    background_tasks.add_task(send_welcome_email, new_user.email, new_user.username)
+
     return {"access_token": access_token, "refresh_token": refresh_token, "token_type": "bearer"}
 
 
 # Login
-async def login_service(data, db):
+async def login_service(request, data, background_tasks, db):
     result = await db.execute(select(User).where(User.email == data.email))
     user = result.scalar_one_or_none()
 
@@ -54,6 +64,10 @@ async def login_service(data, db):
     payload = {"user_id": user.id, "email": user.email}
     access_token = generateAccessToken(payload)
     refresh_token = generateRefreshToken(payload)
+
+    ip = get_client_ip(request)
+    time = datetime.now(timezone.utc).strftime("%d %b %Y, %I:%M %p UTC")
+    background_tasks.add_task(send_login_alert_email, user.email, time, ip)
 
     return {"access_token": access_token, "refresh_token": refresh_token, "token_type": "bearer"}
 
@@ -76,19 +90,19 @@ async def update_profile_service(user_id, data, db):
 
 
 # Generate OTP
-async def generate_otp_service(email, redis):
-    stored_otp = await redis.get(f"otp:{email}")
+async def generate_otp_service(email, redis_client):
+    stored_otp = await redis_client.get(f"otp:{email}")
     if stored_otp:
-        await redis.delete(f"otp:{email}")
+        await redis_client.delete(f"otp:{email}")
     
     new_otp = str(secrets.randbelow(1000000)).zfill(6)
-    await redis.setex(f"otp:{email}", 600, new_otp)
+    await redis_client.setex(f"otp:{email}", 600, new_otp)
     return new_otp
 
 
 # Verify OTP
-async def verify_otp_service(data, redis):
-    stored_otp = await redis.get(f"otp:{data.email}")
+async def verify_otp_service(data, redis_client):
+    stored_otp = await redis_client.get(f"otp:{data.email}")
     
     if not stored_otp:
         raise HTTPException(status_code=400, detail="OTP expired or not requested")
@@ -96,23 +110,24 @@ async def verify_otp_service(data, redis):
     if stored_otp != data.otp:
         raise HTTPException(status_code=400, detail="Wrong OTP")
     
-    await redis.setex(f"otp_verified:{data.email}", 300, "true")
-    await redis.delete(f"otp:{data.email}")
+    await redis_client.setex(f"otp_verified:{data.email}", 300, "true")
+    await redis_client.delete(f"otp:{data.email}")
 
     return True
 
+
 # Reset Password
-async def reset_password_service(data, redis, db):
+async def reset_password_service(data, redis_client, db):
     result = await db.execute(select(User).where(User.email == data.email))
     user = result.scalar_one_or_none()
 
     if not user:
         raise HTTPException(status_code=404, detail="Invalid email id")
 
-    is_verified = await redis.get(f"otp_verified:{data.email}")
+    is_verified = await redis_client.get(f"otp_verified:{data.email}")
     if not is_verified:
         raise HTTPException(status_code=403, detail="OTP not verified")
-    await redis.delete(f"otp_verified:{data.email}")
+    await redis_client.delete(f"otp_verified:{data.email}")
 
     new_pass = data.new_password
     confirm_new_pass = data.confirm_new_password

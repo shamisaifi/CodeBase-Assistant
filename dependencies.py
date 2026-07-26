@@ -1,15 +1,16 @@
-from typing import AsyncGenerator
+from collections.abc import AsyncGenerator
 
-from fastapi import Depends, HTTPException, Request
-from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
-from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
 import jwt
 import redis.asyncio as redis
+from fastapi import Depends, HTTPException, Request
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
-from models.auth import User
-from db.session import SessionLocal
 from config.settings import settings
+from db.session import SessionLocal
+from models.auth import User
+
 
 async def get_db() -> AsyncGenerator[AsyncSession, None]:
     async with SessionLocal() as session:
@@ -18,7 +19,10 @@ async def get_db() -> AsyncGenerator[AsyncSession, None]:
 
 security = HTTPBearer()
 
-async def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(security), db: AsyncSession = Depends(get_db)) -> User:
+async def get_current_user(
+    credentials: HTTPAuthorizationCredentials = Depends(security),
+    db: AsyncSession = Depends(get_db),
+) -> User:
     token = credentials.credentials
 
     try:
