@@ -36,12 +36,12 @@ from services.auth_service import (
     update_profile_service,
     verify_otp_service,
 )
-from services.mail_service import send_otp_email, send_password_reset_success_email
-from services.upload_service import (
+from services.avatar_upload_service import (
     save_to_cloudinaryk,
     save_to_disk,
     validate_image_service,
 )
+from services.mail_service import send_otp_email, send_password_reset_success_email
 
 router = APIRouter()
 
@@ -151,7 +151,7 @@ async def reset_password(
 async def upload_avatar(
     current_user: CurrentUser,
     db: DBSession,
-    file: UploadFile = File(...)
+    file: Annotated[UploadFile, File(...)]
 ):
     validate_image_service(file)
 

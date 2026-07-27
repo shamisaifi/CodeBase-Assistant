@@ -15,7 +15,7 @@ class ChatSession(Base):
 
     user: Mapped["User"] = relationship(back_populates="chat_sessions")
     chat_messages: Mapped[list["ChatMessage"]] = relationship(back_populates="chat_session")
-    files: Mapped[list["File"]] = relationship("File", foreign_keys="File.chat_session_id")
+    files: Mapped[list["CodeFile"]] = relationship("CodeFile", foreign_keys="CodeFile.chat_session_id")
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())

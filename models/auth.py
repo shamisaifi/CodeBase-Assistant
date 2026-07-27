@@ -19,7 +19,7 @@ class User(Base):
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
 
     chat_sessions: Mapped[list["ChatSession"]] = relationship(back_populates="user")
-    files: Mapped[list["File"]] = relationship("File", foreign_keys="File.user_id")
+    files: Mapped[list["CodeFile"]] = relationship("CodeFile", foreign_keys="CodeFile.user_id")
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())

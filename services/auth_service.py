@@ -36,7 +36,7 @@ async def register_user_service(data, background_tasks, db):
         avatar=data.avatar
     )
 
-    db.add(new_user)
+    await db.add(new_user)
     await db.commit()
     await db.refresh(new_user)
 

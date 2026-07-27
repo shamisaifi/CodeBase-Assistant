@@ -9,6 +9,7 @@ from config.settings import settings
 from db.base import Base
 from db.session import engine
 from routes.auth_router import router as auth_router
+from routes.file_router import router as file_router
 
 
 @asynccontextmanager
@@ -47,7 +48,8 @@ def home():
         "message": "this is home"
     })
 
-app.include_router(auth_router, prefix="/api/v1/auth", tags=["auth"])
+app.include_router(auth_router, prefix="/api/v1/auth", tags=["uth"])
+app.include_router(file_router, prefix="/api/v1/files", tags=["Files"])
 
 
 # exceptions handled in the last
