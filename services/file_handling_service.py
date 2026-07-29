@@ -3,6 +3,7 @@ import uuid
 
 import aiofiles
 from fastapi import HTTPException, UploadFile
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.file import CodeFile
 
@@ -36,11 +37,18 @@ def generate_file_name(file_name: str):
     return f"{uuid.uuid4()}{ext}"
 
 
-async def save_file_to_db(files: UploadFile, directory: str, current_user, db, session_id):
+async def save_file_to_db(
+    files: list[UploadFile], 
+    session_id: int,
+    user_id: int, 
+    directory: str, 
+    db: AsyncSession, 
+    ):
     file_ids = []
+    new_files = []
 
+    os.makedirs(directory, exist_ok=True)
     for file in files:
-        os.makedirs(directory, exist_ok=True)
 
         file_name = generate_file_name(file.filename)
         file_path = os.path.join(directory, file_name)
@@ -54,15 +62,18 @@ async def save_file_to_db(files: UploadFile, directory: str, current_user, db, s
             file_size=file.size,
             file_path=file_path,
             file_type=os.path.splitext(file_name)[1],
-            user_id=current_user.id,
+            user_id=user_id,
             chat_session_id=session_id
         )
 
         db.add(new_file)
-        await db.commit()
-        await db.refresh(new_file)
+        new_files.append(new_file)
+        
+    await db.commit()
 
-        file_ids.append(new_file.id)
+    for f in new_files:
+        await db.refresh(f)
+        file_ids.append(f.id)
 
     return file_ids
         
