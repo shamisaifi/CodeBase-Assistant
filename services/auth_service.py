@@ -1,9 +1,11 @@
 
 import secrets
+from datetime import datetime, timedelta, timezone
 
 import bcrypt
+import jwt
 from fastapi import BackgroundTasks, HTTPException
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from config.helper_functions import (
@@ -11,7 +13,9 @@ from config.helper_functions import (
     generate_refresh_token,
     get_client_ip,
 )
+from config.settings import settings
 from models.auth import User
+from models.refresh_token import RefreshToken
 from services.mail_service import send_login_alert_email, send_welcome_email
 
 
@@ -57,7 +61,10 @@ async def register_user_service(data, background_tasks: BackgroundTasks, db: Asy
         raise HTTPException(status_code=500, detail="Registration failed")
 
     background_tasks.add_task(send_welcome_email, new_user.email, new_user.username)
-    return _build_token_response(new_user)
+    tokens = _build_token_response(new_user)
+    await save_refresh_token(new_user.id, tokens["refresh_token"], db)
+    return tokens
+
 
 
 async def login_service(request, data, background_tasks: BackgroundTasks, db: AsyncSession):
@@ -76,7 +83,9 @@ async def login_service(request, data, background_tasks: BackgroundTasks, db: As
     login_time = datetime.now(timezone.utc).strftime("%d %b %Y, %I:%M %p UTC")
     background_tasks.add_task(send_login_alert_email, user.email, user.username, login_time, ip)
 
-    return _build_token_response(user)
+    tokens = _build_token_response(user)
+    await save_refresh_token(user.id, tokens["refresh_token"], db)
+    return tokens
 
 
 async def update_profile_service(user_id: int, data, db: AsyncSession):
@@ -103,7 +112,6 @@ async def update_profile_service(user_id: int, data, db: AsyncSession):
 
 
 async def generate_otp_service(email: str, redis_client) -> str:
-    # delete existing OTP if any before generating new one
     await redis_client.delete(f"otp:{email}")
     otp = str(secrets.randbelow(1000000)).zfill(6)
     await redis_client.setex(f"otp:{email}", 600, otp)
@@ -147,3 +155,77 @@ async def reset_password_service(data, redis_client, db: AsyncSession):
 
     await redis_client.delete(f"otp_verified:{data.email}")
     return {"message": "Password reset successfully"}
+
+
+async def save_refresh_token(user_id: int, refresh_token: str, db: AsyncSession) -> None:
+    payload = jwt.decode(refresh_token, settings.REFRESH_TOKEN_SECRET, algorithms=["HS256"])
+    expires_at = datetime.fromtimestamp(payload["exp"], tz=timezone.utc)
+
+    await db.execute(delete(RefreshToken).where(RefreshToken.user_id == user_id))
+
+    new_token = RefreshToken(
+        token=refresh_token,
+        user_id=user_id,
+        expires_at=expires_at,
+    )
+    db.add(new_token)
+    await db.commit()
+
+
+async def logout_service(
+    access_token: str,
+    refresh_token: str,
+    redis_client,
+    db: AsyncSession,
+) -> None:
+    try:
+        payload = jwt.decode(
+            access_token,
+            settings.ACCESS_TOKEN_SECRET,
+            algorithms=["HS256"]
+        )
+        exp = payload.get("exp")
+        if exp:
+            ttl = int(exp - datetime.now(timezone.utc).timestamp())
+            if ttl > 0:
+                await redis_client.setex(f"blacklist:{access_token}", ttl, "true")
+    except jwt.InvalidTokenError:
+        pass
+
+    await db.execute(
+        delete(RefreshToken).where(RefreshToken.token == refresh_token)
+    )
+    await db.commit()
+
+
+async def refresh_access_token_service(
+    refresh_token: str,
+    redis_client,
+    db: AsyncSession,
+) -> dict:
+    try:
+        payload = jwt.decode(
+            refresh_token,
+            settings.REFRESH_TOKEN_SECRET,
+            algorithms=["HS256"]
+        )
+    except jwt.ExpiredSignatureError:
+        raise HTTPException(status_code=401, detail="Refresh token expired, please login again")
+    except jwt.InvalidTokenError:
+        raise HTTPException(status_code=401, detail="Invalid refresh token")
+
+    result = await db.execute(
+        select(RefreshToken).where(RefreshToken.token == refresh_token)
+    )
+    db_token = result.scalar_one_or_none()
+    if not db_token:
+        raise HTTPException(status_code=401, detail="Refresh token revoked, please login again")
+
+    user_id = payload.get("user_id")
+    email = payload.get("email")
+
+    from config.helper_functions import generate_access_token
+    new_access_token = generate_access_token(user_id, email)
+
+    return {"access_token": new_access_token, "token_type": "bearer"}
+

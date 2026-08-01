@@ -46,3 +46,9 @@ class VerifyOtp(VerifyEmail):
 class ResetPassword(VerifyEmail):
     new_password: str
     confirm_new_password: str
+
+class LogoutRequest(BaseModel):
+    refresh_token: str
+
+class RefreshTokenRequest(BaseModel):
+    refresh_token: str

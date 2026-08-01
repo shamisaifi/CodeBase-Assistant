@@ -11,6 +11,7 @@ from fastapi import (
     Request,
     UploadFile,
 )
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -20,6 +21,8 @@ from dependencies import get_current_user, get_db, get_redis
 from models.auth import User
 from schemas.auth import (
     LoginRequest,
+    LogoutRequest,
+    RefreshTokenRequest,
     ResetPassword,
     TokenResponse,
     UserCreate,
@@ -31,6 +34,8 @@ from schemas.auth import (
 from services.auth_service import (
     generate_otp_service,
     login_service,
+    logout_service,
+    refresh_access_token_service,
     register_user_service,
     reset_password_service,
     update_profile_service,
@@ -168,4 +173,32 @@ async def upload_avatar(
     await db.commit()
     await db.refresh(current_user)
     return current_user
+
+
+security_scheme = HTTPBearer()
+
+@router.post("/logout")
+async def logout(
+    credentials: HTTPAuthorizationCredentials = Depends(security_scheme),
+    data: LogoutRequest = ...,
+    current_user: CurrentUser = ...,
+    redis_client: RedisClient = ...,
+    db: DBSession = ...,
+):
+    await logout_service(
+        access_token=credentials.credentials,
+        refresh_token=data.refresh_token,
+        redis_client=redis_client,
+        db=db,
+    )
+    return {"message": "Logged out successfully"}
+
+
+@router.post("/refresh-token", response_model=TokenResponse)
+async def refresh_token(
+    data: RefreshTokenRequest,
+    redis_client: RedisClient,
+    db: DBSession,
+):
+    return await refresh_access_token_service(data.refresh_token, redis_client, db)
 
