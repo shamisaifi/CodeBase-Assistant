@@ -54,3 +54,4 @@ async def get_session_by_id(session_id: int, user_id: int, db: AsyncSession) -> 
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to fetch session: {str(e)}")
+    

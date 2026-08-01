@@ -1,3 +1,4 @@
+
 from datetime import datetime, timedelta, timezone
 
 import jwt
@@ -6,21 +7,26 @@ from fastapi import Request
 from config.settings import settings
 
 
-def generateAccessToken(payload):
-    
-    payload["exp"] = datetime.now(timezone.utc) + timedelta(hours=5)
-    payload["iat"] = datetime.now(timezone.utc)
+def generate_access_token(user_id: int, email: str) -> str:
+    payload = {
+        "user_id": user_id,
+        "email": email,
+        "exp": datetime.now(timezone.utc) + timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE),
+        "iat": datetime.now(timezone.utc),
+        "type": "access",
+    }
+    return jwt.encode(payload, settings.ACCESS_TOKEN_SECRET, algorithm="HS256")
 
-    accesssToken = jwt.encode(payload, settings.ACCESS_TOKEN_SECRET, algorithm="HS256")
-    return accesssToken
 
-def generateRefreshToken(payload):
-
-    payload["exp"] = datetime.now(timezone.utc) + timedelta(days=7)
-    payload["iat"] = datetime.now(timezone.utc)
-
-    refreshToken = jwt.encode(payload, settings.REFRESH_TOKEN_SECRET, algorithm="HS256")
-    return refreshToken
+def generate_refresh_token(user_id: int, email: str) -> str:
+    payload = {
+        "user_id": user_id,
+        "email": email,
+        "exp": datetime.now(timezone.utc) + timedelta(minutes=settings.REFRESH_TOKEN_EXPIRE),
+        "iat": datetime.now(timezone.utc),
+        "type": "refresh",
+    }
+    return jwt.encode(payload, settings.REFRESH_TOKEN_SECRET, algorithm="HS256")
 
 
 def get_client_ip(request: Request) -> str:

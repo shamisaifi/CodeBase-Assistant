@@ -1,147 +1,149 @@
+
 import secrets
-from datetime import datetime, timezone
 
 import bcrypt
-from fastapi import HTTPException
+from fastapi import BackgroundTasks, HTTPException
 from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from config.helper_functions import (
-    generateAccessToken,
-    generateRefreshToken,
+    generate_access_token,
+    generate_refresh_token,
     get_client_ip,
 )
 from models.auth import User
 from services.mail_service import send_login_alert_email, send_welcome_email
 
 
-# Registration
-async def register_user_service(data, background_tasks, db):
-    result = await db.execute(select(User).where(User.email == data.email))
-    user = result.scalar_one_or_none()
+def _hash_password(plain: str) -> str:
+    return bcrypt.hashpw(plain.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
 
-    if user:
-        raise HTTPException(status_code=400, detail="User already exist")
-    
-    password_bytes = data.password.encode('utf-8')
-    salt = bcrypt.gensalt()
-    password_hash = bcrypt.hashpw(password_bytes, salt )
-    password_hash = password_hash.decode('utf-8')
 
-    new_user = User(
-        first_name=data.first_name,
-        last_name=data.last_name,
-        username=data.username,
-        email=data.email,
-        password=password_hash,
-        avatar=data.avatar
-    )
+def _verify_password(plain: str, hashed: str) -> bool:
+    return bcrypt.checkpw(plain.encode("utf-8"), hashed.encode("utf-8"))
 
-    await db.add(new_user)
-    await db.commit()
-    await db.refresh(new_user)
 
-    payload = {"user_id": new_user.id, "email": new_user.email}
-    access_token = generateAccessToken(payload)
-    refresh_token = generateRefreshToken(payload)
+def _build_token_response(user: User) -> dict:
+    return {
+        "access_token": generate_access_token(user.id, user.email),
+        "refresh_token": generate_refresh_token(user.id, user.email),
+        "token_type": "bearer",
+    }
+
+
+async def register_user_service(data, background_tasks: BackgroundTasks, db: AsyncSession):
+    existing = await db.execute(select(User).where(User.email == data.email))
+    if existing.scalar_one_or_none():
+        raise HTTPException(status_code=400, detail="Email already registered")
+
+    existing_username = await db.execute(select(User).where(User.username == data.username))
+    if existing_username.scalar_one_or_none():
+        raise HTTPException(status_code=400, detail="Username already taken")
+
+    try:
+        new_user = User(
+            first_name=data.first_name.strip(),
+            last_name=data.last_name.strip() if data.last_name else None,
+            username=data.username.strip().lower(),
+            email=data.email.strip().lower(),
+            password=_hash_password(data.password),
+            avatar=data.avatar,
+        )
+        db.add(new_user)
+        await db.commit()
+        await db.refresh(new_user)
+    except Exception as e:
+        await db.rollback()
+        raise HTTPException(status_code=500, detail="Registration failed")
 
     background_tasks.add_task(send_welcome_email, new_user.email, new_user.username)
+    return _build_token_response(new_user)
 
-    return {"access_token": access_token, "refresh_token": refresh_token, "token_type": "bearer"}
 
-
-# Login
-async def login_service(request, data, background_tasks, db):
-    result = await db.execute(select(User).where(User.email == data.email))
+async def login_service(request, data, background_tasks: BackgroundTasks, db: AsyncSession):
+    result = await db.execute(select(User).where(User.email == data.email.strip().lower()))
     user = result.scalar_one_or_none()
 
-    if not user:
-        raise HTTPException(status_code=404, detail="User not found")
+    # same error for both "user not found" and "wrong password" — prevents user enumeration
+    if not user or not _verify_password(data.password, user.password):
+        raise HTTPException(status_code=401, detail="Invalid email or password")
 
-    is_correct = bcrypt.checkpw(data.password.encode(), user.password.encode())
-    if not is_correct:
-        raise HTTPException(status_code=401, detail="Invalid credentials")
+    if not user.is_active:
+        raise HTTPException(status_code=403, detail="Account is disabled")
 
-    payload = {"user_id": user.id, "email": user.email}
-    access_token = generateAccessToken(payload)
-    refresh_token = generateRefreshToken(payload)
-
+    from datetime import datetime, timezone
     ip = get_client_ip(request)
-    time = datetime.now(timezone.utc).strftime("%d %b %Y, %I:%M %p UTC")
-    background_tasks.add_task(send_login_alert_email, user.email, time, ip)
+    login_time = datetime.now(timezone.utc).strftime("%d %b %Y, %I:%M %p UTC")
+    background_tasks.add_task(send_login_alert_email, user.email, user.username, login_time, ip)
 
-    return {"access_token": access_token, "refresh_token": refresh_token, "token_type": "bearer"}
+    return _build_token_response(user)
 
 
-# Update Profile
-async def update_profile_service(user_id, data, db):
+async def update_profile_service(user_id: int, data, db: AsyncSession):
     result = await db.execute(select(User).where(User.id == user_id))
     user = result.scalar_one_or_none()
-
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
 
-    user.first_name = data.first_name if data.first_name is not None else user.first_name
-    user.last_name = data.last_name if data.last_name is not None else user.last_name
-    user.avatar = data.avatar if data.avatar is not None else user.avatar
+    if data.first_name is not None:
+        user.first_name = data.first_name.strip()
+    if data.last_name is not None:
+        user.last_name = data.last_name.strip()
+    if data.avatar is not None:
+        user.avatar = data.avatar
 
-    await db.commit() 
-    await db.refresh(user)
+    try:
+        await db.commit()
+        await db.refresh(user)
+    except Exception:
+        await db.rollback()
+        raise HTTPException(status_code=500, detail="Profile update failed")
+
     return user
 
 
-# Generate OTP
-async def generate_otp_service(email, redis_client):
-    stored_otp = await redis_client.get(f"otp:{email}")
-    if stored_otp:
-        await redis_client.delete(f"otp:{email}")
-    
-    new_otp = str(secrets.randbelow(1000000)).zfill(6)
-    await redis_client.setex(f"otp:{email}", 600, new_otp)
-    return new_otp
+async def generate_otp_service(email: str, redis_client) -> str:
+    # delete existing OTP if any before generating new one
+    await redis_client.delete(f"otp:{email}")
+    otp = str(secrets.randbelow(1000000)).zfill(6)
+    await redis_client.setex(f"otp:{email}", 600, otp)
+    return otp
 
 
-# Verify OTP
-async def verify_otp_service(data, redis_client):
+async def verify_otp_service(data, redis_client) -> bool:
     stored_otp = await redis_client.get(f"otp:{data.email}")
-    
+
     if not stored_otp:
         raise HTTPException(status_code=400, detail="OTP expired or not requested")
-    
-    if stored_otp != data.otp:
-        raise HTTPException(status_code=400, detail="Wrong OTP")
-    
-    await redis_client.setex(f"otp_verified:{data.email}", 300, "true")
-    await redis_client.delete(f"otp:{data.email}")
 
+    if stored_otp != str(data.otp):
+        raise HTTPException(status_code=400, detail="Incorrect OTP")
+
+    await redis_client.delete(f"otp:{data.email}")
+    # mark email as OTP-verified for 5 minutes — reset password must happen within this window
+    await redis_client.setex(f"otp_verified:{data.email}", 300, "true")
     return True
 
 
-# Reset Password
-async def reset_password_service(data, redis_client, db):
-    result = await db.execute(select(User).where(User.email == data.email))
+async def reset_password_service(data, redis_client, db: AsyncSession):
+    result = await db.execute(select(User).where(User.email == data.email.strip().lower()))
     user = result.scalar_one_or_none()
-
     if not user:
-        raise HTTPException(status_code=404, detail="Invalid email id")
+        raise HTTPException(status_code=404, detail="Email not found")
 
     is_verified = await redis_client.get(f"otp_verified:{data.email}")
     if not is_verified:
-        raise HTTPException(status_code=403, detail="OTP not verified")
+        raise HTTPException(status_code=403, detail="OTP verification required before reset")
+
+    if data.new_password != data.confirm_new_password:
+        raise HTTPException(status_code=400, detail="Passwords do not match")
+
+    try:
+        user.password = _hash_password(data.new_password)
+        await db.commit()
+    except Exception:
+        await db.rollback()
+        raise HTTPException(status_code=500, detail="Password reset failed")
+
     await redis_client.delete(f"otp_verified:{data.email}")
-
-    new_pass = data.new_password
-    confirm_new_pass = data.confirm_new_password
-
-    if new_pass != confirm_new_pass:
-        raise HTTPException(status_code=400, detail="Password do not match")
-
-    new_pass_bytes = new_pass.encode('utf-8')
-    salt = bcrypt.gensalt()
-    new_hashed_pass = bcrypt.hashpw(new_pass_bytes, salt)
-    new_hashed_pass = new_hashed_pass.decode('utf-8')
-
-    user.password = new_hashed_pass
-    await db.commit()
-    await db.refresh(user)
-
     return {"message": "Password reset successfully"}
