@@ -19,10 +19,6 @@ CHUNK_SIZE = 1024 * 1024  # 1MB chunks
 
 
 def validate_files(files: list[UploadFile]) -> dict:
-    """
-    Separates files into valid and invalid.
-    Does NOT raise — caller decides what to do with invalid files.
-    """
     valid_files = []
     invalid_files = []
 
