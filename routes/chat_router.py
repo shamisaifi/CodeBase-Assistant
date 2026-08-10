@@ -15,6 +15,7 @@ from dependencies import get_current_user, get_db
 from models.auth import User
 from schemas.chat import FileResponse, SessionResponse, UploadResponse
 from services.file_handling_service import save_file_to_db, validate_files
+from services.rag_service import process_files_for_rag
 from services.session_service import (
     create_session,
     get_session_by_id,
@@ -49,7 +50,9 @@ async def new_session(
     )
 
     # RAG processing starts here as background task (implement when ready)
-    # background_tasks.add_task(process_files_for_rag, [f.id for f in saved_files], db)
+    file_data = [(f.id, f.file_path) for f in saved_files]
+    background_tasks.add_task(process_files_for_rag, file_data, db)
+
 
     return UploadResponse(
         session=SessionResponse.model_validate(session),

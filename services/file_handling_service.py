@@ -8,11 +8,16 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.file import CodeFile
 
-ALLOWED_CODE_EXTENSIONS = {
-    ".py", ".js", ".ts", ".jsx", ".tsx",
-    ".java", ".go", ".rs", ".cpp", ".c",
-    ".html", ".css", ".json", ".yaml", ".md",
-}
+ALLOWED_CODE_EXTENSIONS = [
+    '.agda', '.sh', '.bash', '.bats',
+    '.c', '.h', '.cc', '.cpp', '.cxx', '.c++', '.hh', '.hpp', '.hxx',
+    '.cs', '.css', '.go', '.hs', '.lhs', '.html', '.htm',
+    '.java', '.js', '.mjs', '.cjs', '.json', '.jl',
+    '.ml', '.mli', '.php', '.php3', '.php4', '.php5', '.phtml',
+    '.py', '.pyw', '.pyi', '.rb', '.rake', '.gemspec',
+    '.rs', '.scala', '.sc', '.ts', '.tsx',
+    '.v', '.vh', '.sv', '.svh',
+]
 
 MAX_CODE_FILE_SIZE = 10 * 1024 * 1024  # 10MB
 CHUNK_SIZE = 1024 * 1024  # 1MB chunks

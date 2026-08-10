@@ -9,7 +9,7 @@ from tree_sitter_languages import get_language, get_parser
 
 text_file_types = {'.txt', '.md'}
 
-code_file_types = {
+code_file_types = [
     '.agda', '.sh', '.bash', '.bats',
     '.c', '.h', '.cc', '.cpp', '.cxx', '.c++', '.hh', '.hpp', '.hxx',
     '.cs', '.css', '.go', '.hs', '.lhs', '.html', '.htm',
@@ -18,7 +18,7 @@ code_file_types = {
     '.py', '.pyw', '.pyi', '.rb', '.rake', '.gemspec',
     '.rs', '.scala', '.sc', '.ts', '.tsx',
     '.v', '.vh', '.sv', '.svh',
-}
+]
 
 EXTENSION_TO_LANGUAGE = {
     '.agda': 'agda', '.sh': 'bash', '.bash': 'bash', '.bats': 'bash',
@@ -96,6 +96,8 @@ async def chunk_multiple_files(file_paths: list[str]) -> dict[str, list[str]]:
         path, chunks = result
         output[path] = chunks
 
+    print("output: ", output)
+
     return output
 
 
@@ -107,6 +109,7 @@ def chunk_code_file(content: str, ext: str) -> list[str]:
     try:
         parser = get_parser(language_name)
         tree = parser.parse(bytes(content, "utf-8"))
+        print("tree: ", tree)
         root = tree.root_node
         lines = content.split("\n")
         chunks = []
@@ -122,6 +125,7 @@ def chunk_code_file(content: str, ext: str) -> list[str]:
         if not chunks:
             return chunk_text_file(content)
 
+        print("chunks: ", chunks)
         return chunks
 
     except Exception:

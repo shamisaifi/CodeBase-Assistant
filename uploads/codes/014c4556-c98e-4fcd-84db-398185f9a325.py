@@ -1,6 +1,6 @@
 
 import secrets
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import bcrypt
 import jwt
@@ -71,6 +71,7 @@ async def login_service(request, data, background_tasks: BackgroundTasks, db: As
     result = await db.execute(select(User).where(User.email == data.email.strip().lower()))
     user = result.scalar_one_or_none()
 
+    # same error for both "user not found" and "wrong password" — prevents user enumeration
     if not user or not _verify_password(data.password, user.password):
         raise HTTPException(status_code=401, detail="Invalid email or password")
 
