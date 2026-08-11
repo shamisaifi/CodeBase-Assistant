@@ -2,6 +2,7 @@
 from sqlalchemy import select
 
 from ai.chunking import chunk_multiple_files
+from ai.embeddings import embed_chunks, embed_query
 from models.file import CodeFile
 
 
@@ -16,8 +17,8 @@ async def process_files_for_rag (file_data: list[tuple[int, str]], db):
     files = result.scalars().all()
 
     for file in files:
-        chunks = chunks_result.get(file.file_path, [])
-        # embedding goes here
+        chunk = chunks_result.get(file.file_path, [])
+        embedded = embed_chunks(chunk)
         file.is_processed = True
 
     await db.commit()

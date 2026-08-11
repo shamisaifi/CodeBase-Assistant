@@ -5,7 +5,7 @@ import os
 
 import aiofiles
 from fastapi import HTTPException
-from tree_sitter_languages import get_language, get_parser
+from tree_sitter_languages import get_parser
 
 text_file_types = {'.txt', '.md'}
 
