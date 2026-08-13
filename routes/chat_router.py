@@ -9,10 +9,12 @@ from fastapi import (
     HTTPException,
     UploadFile,
 )
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from dependencies import get_current_user, get_db
 from models.auth import User
+from models.chat import ChatMessage
 from schemas.chat import FileResponse, SessionResponse, UploadResponse
 from services.file_handling_service import save_file_to_db, validate_files
 from services.rag_service import process_files_for_rag
@@ -69,3 +71,36 @@ async def get_sessions(current_user: CurrentUser, db: DBSession):
 @router.get("/sessions/{session_id}", response_model=SessionResponse)
 async def get_session(session_id: int, current_user: CurrentUser, db: DBSession):
     return await get_session_by_id(session_id, current_user.id, db)
+
+
+@router.post("/sessions/{session_id}/upload-files")
+async def upload_files_to_session(
+    session_id: int,
+    current_user: CurrentUser,
+    db: DBSession,
+    background_tasks: BackgroundTasks,
+    files: list[UploadFile] = File(...)
+):
+    session = await get_session_by_id(session_id, current_user.id, db)
+    
+    validation = validate_files(files)
+    saved_files = await save_file_to_db(
+            validation["valid_files"], session.id, current_user.id, "uploads/codes", db
+        )
+    file_data = [(f.id, f.file_path) for f in saved_files]
+    background_tasks.add_task(process_files_for_rag, file_data)
+
+    return saved_files
+
+
+@router.get("/sessions/{session_id}/messages")
+async def get_messages(
+    session_id: int,
+    current_user: CurrentUser,
+    db: DBSession
+):
+    session = await get_session_by_id(session_id, current_user.id, db)
+        
+    result = await db.execute(select(ChatMessage).where(ChatMessage.session_id == session.id))
+    messages = result.scalars().all()
+    return messages
