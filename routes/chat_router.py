@@ -1,5 +1,6 @@
 from typing import Annotated
 
+from dependencies import get_current_user, get_db
 from fastapi import (
     APIRouter,
     BackgroundTasks,
@@ -9,20 +10,26 @@ from fastapi import (
     HTTPException,
     UploadFile,
 )
-from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
-
-from dependencies import get_current_user, get_db
 from models.auth import User
 from models.chat import ChatMessage
-from schemas.chat import FileResponse, SessionResponse, UploadResponse
+from models.file import CodeFile
+from schemas.chat import (
+    ChatRequest,
+    ChatResponse,
+    FileResponse,
+    MessageResponse,
+    SessionResponse,
+    UploadResponse,
+)
 from services.file_handling_service import save_file_to_db, validate_files
-from services.rag_service import process_files_for_rag
+from services.rag_service import process_files_for_rag, rag_search
 from services.session_service import (
     create_session,
     get_session_by_id,
     get_user_sessions,
 )
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 router = APIRouter()
 
@@ -53,7 +60,7 @@ async def new_session(
 
     # RAG processing starts here as background task (implement when ready)
     file_data = [(f.id, f.file_path) for f in saved_files]
-    background_tasks.add_task(process_files_for_rag, file_data, db)
+    background_tasks.add_task(process_files_for_rag, file_data)
 
 
     return UploadResponse(
@@ -73,7 +80,7 @@ async def get_session(session_id: int, current_user: CurrentUser, db: DBSession)
     return await get_session_by_id(session_id, current_user.id, db)
 
 
-@router.post("/sessions/{session_id}/upload-files")
+@router.post("/sessions/{session_id}/upload-files", response_model=list[FileResponse])
 async def upload_files_to_session(
     session_id: int,
     current_user: CurrentUser,
@@ -93,7 +100,7 @@ async def upload_files_to_session(
     return saved_files
 
 
-@router.get("/sessions/{session_id}/messages")
+@router.get("/sessions/{session_id}/messages", response_model=list[MessageResponse])
 async def get_messages(
     session_id: int,
     current_user: CurrentUser,
@@ -104,3 +111,54 @@ async def get_messages(
     result = await db.execute(select(ChatMessage).where(ChatMessage.session_id == session.id))
     messages = result.scalars().all()
     return messages
+
+
+@router.post("/sessions/{session_id}/chat", response_model=ChatResponse)
+async def chat(
+    session_id: int,
+    data: ChatRequest,
+    current_user: CurrentUser,
+    db: DBSession
+):
+    await get_session_by_id(session_id, current_user.id, db)
+    result = await db.execute(select(CodeFile).where(CodeFile.chat_session_id == session_id, CodeFile.is_processed == True))
+    processed_files = result.scalars().all()
+
+    if not processed_files:
+        return {"message": "Files not found"}
+
+    answer = await rag_search(data.message, session_id, db)
+    user_message = ChatMessage(
+            content = data.message,
+            sender = "user",
+            session_id = session_id,
+        )
+    
+    ai_message = ChatMessage(
+            content = answer,
+            sender = "ai",
+            session_id = session_id,
+        )
+
+    db.add(user_message)               # correct
+    db.add(ai_message)
+
+    await db.commit()
+
+    await db.refresh(user_message)
+    await db.refresh(ai_message)
+
+    return ChatResponse(
+        user_message=data.message,
+        ai_response=answer,
+        session_id=session_id
+    )
+
+
+@router.get("/sessions/{session_id}/files", response_model=list[FileResponse])
+async def get_session_files(session_id: int, current_user: CurrentUser, db: DBSession):
+    await get_session_by_id(session_id, current_user.id, db)
+    result = await db.execute(
+        select(CodeFile).where(CodeFile.chat_session_id == session_id)
+    )
+    return result.scalars().all()

@@ -22,6 +22,9 @@ class Settings(BaseSettings):
     SMTP_PASS: str | None = None
     SMTP_FROM: str | None = None
     STORAGE: str = "local"
+    CLOUDINARY_CLOUD_NAME: str
+    CLOUDINARY_API_KEY: str
+    CLOUDINARY_API_SECRET: str
 
     class Config:
         env_file = '.env'

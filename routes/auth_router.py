@@ -179,11 +179,11 @@ security_scheme = HTTPBearer()
 
 @router.post("/logout")
 async def logout(
+    data: LogoutRequest,
+    current_user: CurrentUser,
+    redis_client: RedisClient,
+    db: DBSession,
     credentials: HTTPAuthorizationCredentials = Depends(security_scheme),
-    data: LogoutRequest = ...,
-    current_user: CurrentUser = ...,
-    redis_client: RedisClient = ...,
-    db: DBSession = ...,
 ):
     await logout_service(
         access_token=credentials.credentials,

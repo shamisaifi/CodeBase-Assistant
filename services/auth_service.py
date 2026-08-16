@@ -199,7 +199,6 @@ async def logout_service(
 
 async def refresh_access_token_service(
     refresh_token: str,
-    redis_client,
     db: AsyncSession,
 ) -> dict:
     try:

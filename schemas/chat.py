@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class SessionCreate(BaseModel):
@@ -26,3 +26,20 @@ class UploadResponse(BaseModel):
     session: SessionResponse
     files: list[FileResponse]
     invalid_files: list[str]
+
+class MessageResponse(BaseModel):
+    model_config = {"from_attributes": True}
+    id: int
+    content: str
+    sender: str
+    session_id: int
+    created_at: datetime
+
+class ChatRequest(BaseModel):
+    message: str = Field(min_length=1, max_length=2000)
+
+class ChatResponse(BaseModel):
+    model_config = {"from_attributes": True}
+    user_message: str
+    ai_response: str
+    session_id: int

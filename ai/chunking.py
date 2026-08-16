@@ -1,5 +1,3 @@
-# ai/chunking.py
-
 import asyncio
 import os
 
@@ -38,20 +36,22 @@ EXTENSION_TO_LANGUAGE = {
     '.v': 'verilog', '.vh': 'verilog', '.sv': 'verilog', '.svh': 'verilog',
 }
 
-# node types that represent meaningful code units across languages
 CHUNK_NODE_TYPES = {
-    'function_definition',    
-    'class_definition',       
+    'function_definition',
+    'class_definition',
     'function_declaration',
     'class_declaration',
-    'method_declaration',     
+    'method_declaration',
     'method_definition',
-    'func_literal',           
-    'function_item',          
-    'impl_item',              
-    'def',                    
-    'class',                  
+    'func_literal',
+    'function_item',
+    'impl_item',
+    'def',
+    'class',
 }
+
+MAX_CHUNK_SIZE = 1200  # characters — keep chunks focused
+OVERLAP_SIZE = 150
 
 
 async def chunk_file(file_path: str) -> list[str]:
@@ -64,12 +64,16 @@ async def chunk_file(file_path: str) -> list[str]:
         if not content.strip():
             return []
 
+        # inject filename into content so LLM knows which file each chunk is from
+        file_name = os.path.basename(file_path)
+        content_with_header = f"# File: {file_name}\n\n{content}"
+
         if ext in text_file_types:
-            return chunk_text_file(content)
+            return chunk_text_file(content_with_header)
         elif ext in code_file_types:
-            return chunk_code_file(content, ext)
+            return chunk_code_file(content, ext, file_name)
         else:
-            return chunk_text_file(content)
+            return chunk_text_file(content_with_header)
 
     except FileNotFoundError:
         raise HTTPException(status_code=404, detail=f"File not found: {file_path}")
@@ -96,12 +100,10 @@ async def chunk_multiple_files(file_paths: list[str]) -> dict[str, list[str]]:
         path, chunks = result
         output[path] = chunks
 
-    print("output: ", output)
-
     return output
 
 
-def chunk_code_file(content: str, ext: str) -> list[str]:
+def chunk_code_file(content: str, ext: str, file_name: str = "") -> list[str]:
     language_name = EXTENSION_TO_LANGUAGE.get(ext)
     if not language_name:
         return chunk_text_file(content)
@@ -109,7 +111,6 @@ def chunk_code_file(content: str, ext: str) -> list[str]:
     try:
         parser = get_parser(language_name)
         tree = parser.parse(bytes(content, "utf-8"))
-        print("tree: ", tree)
         root = tree.root_node
         lines = content.split("\n")
         chunks = []
@@ -118,24 +119,56 @@ def chunk_code_file(content: str, ext: str) -> list[str]:
             if node.type in CHUNK_NODE_TYPES:
                 start = node.start_point[0]
                 end = node.end_point[0]
-                chunk = "\n".join(lines[start:end + 1])
-                if chunk.strip():
-                    chunks.append(chunk)
+                raw_chunk = "\n".join(lines[start:end + 1])
+
+                if not raw_chunk.strip():
+                    continue
+
+                header = f"# File: {file_name}\n" if file_name else ""
+                chunk_with_header = header + raw_chunk
+
+                if len(chunk_with_header) > MAX_CHUNK_SIZE:
+                    sub_chunks = _split_large_function(raw_chunk, file_name)
+                    chunks.extend(sub_chunks)
+                else:
+                    chunks.append(chunk_with_header)
 
         if not chunks:
             return chunk_text_file(content)
 
-        print("chunks: ", chunks)
         return chunks
 
     except Exception:
         return chunk_text_file(content)
 
 
+def _split_large_function(raw_chunk: str, file_name: str) -> list[str]:
+    lines = raw_chunk.split("\n")
+    
+    # function signature = first 1-3 lines (def line + decorators above it)
+    signature_lines = lines[:3]
+    signature = "\n".join(signature_lines)
+    header = f"# File: {file_name}\n" if file_name else ""
+
+    body_lines = lines[3:]
+    body = "\n".join(body_lines)
+
+    # split body using text chunker
+    body_chunks = chunk_text_file(body, max_chunk_size=MAX_CHUNK_SIZE - len(signature) - 50, overlap=OVERLAP_SIZE)
+
+    result = []
+    for i, body_chunk in enumerate(body_chunks):
+        # every sub-chunk gets: header + signature + [continued] marker + body piece
+        label = f"# [Part {i+1} of {len(body_chunks)}]\n" if len(body_chunks) > 1 else ""
+        result.append(f"{header}{label}{signature}\n...\n{body_chunk}")
+
+    return result if result else [f"{header}{raw_chunk}"]
+
+
 def chunk_text_file(
     content: str,
-    max_chunk_size: int = 1500,
-    overlap: int = 200
+    max_chunk_size: int = MAX_CHUNK_SIZE,
+    overlap: int = OVERLAP_SIZE
 ) -> list[str]:
     chunk_list = []
     current_chunk = ""
